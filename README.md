@@ -1,4 +1,4 @@
-Monitor/Debugger and BASIC for Bernd Ulmann's z80_mini
+Monitor/Debugger and BASIC for Bernd Ulmann's z80_mini (http://www.vaxman.de/projects/Z80_mini/index.html)
 <p>
 Binary files are minimon.rom (Monitor/Debugger) and minimonbas.rom (Monitor/Debugger and BASIC).
 <p>
