@@ -335,24 +335,28 @@ CHECKWARM:
                JP        $0153           ; Start BASIC WARM
 
 INIT_16C550:
-                LD      A, 80H          ; Line control register, Set DLAB=1
+                LD      L, 0CH                  ; 1843200 / (16 * 9600)
+BAUD_16C550:
+                LD      A, 80H                  ; Line control register, Set DLAB=1
                 OUT     (uart_register_3), A
-                LD      a, 0CH           ; 1843200 / (16 * 9600)
+                LD      A, L
                 OUT     (uart_register_0), A    ; Divisor latch
                 XOR     A
                 OUT     (uart_register_1), A    ; Divisor latch
-                LD      A, 03H           ; 8N1, Line control register, DLAB=0
+                LD      A, 03H                  ; 8N1, Line control register, DLAB=0
                 OUT     (uart_register_3), A
-                ; Enable this if you run autoflow control
-;                LD      A, 87H  ;07H           ; FIFO enable, reset RCVR/XMIT FIFO
-                ; Use this otherwise
-                LD      A, 07H           ; FIFO enable, reset RCVR/XMIT FIFO
+                LD      A, 07H                  ; FIFO enable, reset RCVR/XMIT FIFO
                 OUT     (uart_register_2), A
-                ; Use this to enable autoflow control
-;                LD      A, 22H
-;                OUT     (uart_register_5), A    ; Enable AFE
                 RET
 
+                ; Enable autoflow control
+AFE_16C550:
+                LD      A, 87H                  ; Trigger level, FIFO enable, reset FIFO
+                OUT     (uart_register_2), A
+                ; Use this to enable autoflow control
+                LD      A, 22H                  ; Modem control register
+                OUT     (uart_register_5), A    ; Enable AFE
+                RET
 
 
                 .ORG 0150H
