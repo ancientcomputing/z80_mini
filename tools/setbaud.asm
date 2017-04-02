@@ -6,6 +6,6 @@
 
 	.ORG 9000h
 	ld	l, 3
-	call	12ch
+	call	006fh
 	jp	150h	; Jump to Monitor cold start
 

@@ -7,9 +7,11 @@
 ; 4. Shift original RAM use up 20h to leave space for the vector table
 ; 5. Shorten messages etc and squeeze everything in under original 150h code length
 ; 6. Adapted for use with Bernd Ulmann's Z80_mini. Some of the UART code is based on
-; Bernd's own monitor.
+; Bernd's own monitor. Comment out serial interrupt code. We'll make it simple and just
+; use polling.
 ; 
-; All mods to original code are copyright Ben Chong and freely licensed to the community
+; All mods/addition to original code are copyright Ben Chong and freely licensed to the 
+; community
 ; Developed for the RC2014 (rc2014.co.uk) and adapted to the Z80_mini
 ;
 ;==================================================================================
@@ -145,7 +147,7 @@ vecTabProto	JP	TXA			; RST 08
 		JP	FIXME			; RST 20
 		JP	FIXME			; RST 28
 		JP	FIXME			; RST 30
-		JP	serialInt		; RST 38
+		JP	FIXME   ;serialInt		; RST 38
 		JP	handle_nmi		; NMI		
 
 ;------------------------------------------------------------------------------
@@ -166,9 +168,14 @@ SIGNON2:       .BYTE     CR,LF
 		JP	PRINT
 		; 006CH
 		JP	PRINT_NEW_LINE
+		; 006FH
+		JP      BAUD_16C550
+		; 0072H
+		JP      AFE_16C550
 
 ;------------------------------------------------------------------------------
 
+#if 0
 serialInt:      PUSH     AF
                 PUSH     HL
                 IN      A, (uart_register_2)    ; Interrupt indentification register
@@ -202,6 +209,7 @@ rts0:           POP      HL
                 POP      AF
                 EI
                 RETI
+#endif
 handle_nmi:
                 RETN
 
@@ -260,13 +268,8 @@ CONOUT1:
 ; Check if a character is available
 ; Z=1 if buffer is empty
 CKINCHAR:
-#if 1
                 IN      A, (uart_register_5)
                 BIT     0, A
-#else
-                LD       A,(serBufUsed)
-                CP       A, $0
-#endif
                 RET
 
 
@@ -305,8 +308,6 @@ INIT:
                LD        (serRdPtr),HL
                XOR       A               ;0 to accumulator
                LD        (serBufUsed),A
-;               LD        A,RTS_LOW
-;               OUT       ($80),A         ; Initialise ACIA
                CALL     INIT_16C550
                IM        1
                EI
@@ -334,8 +335,11 @@ CHECKWARM:
                CALL    PRINT_NEW_LINE
                JP        $0153           ; Start BASIC WARM
 
+;------------------------------------------------------------------------------
+; Initialize UART
 INIT_16C550:
                 LD      L, 0CH                  ; 1843200 / (16 * 9600)
+                ; Call this routine with a value in L to set the baudrate
 BAUD_16C550:
                 LD      A, 80H                  ; Line control register, Set DLAB=1
                 OUT     (uart_register_3), A
@@ -349,7 +353,8 @@ BAUD_16C550:
                 OUT     (uart_register_2), A
                 RET
 
-                ; Enable autoflow control
+;------------------------------------------------------------------------------
+; Enable autoflow control
 AFE_16C550:
                 LD      A, 87H                  ; Trigger level, FIFO enable, reset FIFO
                 OUT     (uart_register_2), A
