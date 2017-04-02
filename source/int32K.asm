@@ -168,21 +168,20 @@ SIGNON2:       .BYTE     CR,LF
 		JP	PRINT_NEW_LINE
 
 ;------------------------------------------------------------------------------
+
 serialInt:      PUSH     AF
                 PUSH     HL
-
-                IN       A,($80)
-                AND      $01             ; Check if interupt due to read buffer full
-                JR       Z,rts0          ; if not, ignore
-
-                IN       A,($81)
+                IN      A, (uart_register_2)    ; Interrupt indentification register
+                AND     0FH
+                CP      04H             ; Check if received data available
+                JR      NZ, rts0         ; if not, ignore
+                IN      A, (uart_register_0)    ; Read byte from UART
                 PUSH     AF
                 LD       A,(serBufUsed)
                 CP       SER_BUFSIZE     ; If full then ignore
                 JR       NZ,notFull
                 POP      AF
                 JR       rts0
-
 notFull:        LD       HL,(serInPtr)
                 INC      HL
                 LD       A,L             ; Only need to check low byte becasuse buffer<256 bytes
@@ -204,18 +203,18 @@ rts0:           POP      HL
                 EI
                 RETI
 handle_nmi:
-		RETN
+                RETN
 
 ;------------------------------------------------------------------------------
 ; RST 10H
 RXA:
 #if 1
-rx_loop:
-                in      a, (uart_register_5)
-                bit     0, a
-                jr      z, rx_loop         ; Wait until there is a character
-                in      a, (uart_register_0)
-                ret
+RX_LOOP:
+                IN      A, (uart_register_5)
+                BIT     0, A
+                JR      Z, RX_LOOP         ; Wait until there is a character
+                IN      A, (uart_register_0)
+                RET
 #else
 waitForChar:    LD       A,(serBufUsed)
                 CP       $00
@@ -248,13 +247,13 @@ FIXME:
 ; Output character to 16C550
 ; Note that this is a blocking call
 TXA:
-                PUSH     AF              ; Store character
-conout1:
-                in      a, (uart_register_5)
-                bit     5, a            ; Set Zero flag if still transmitting character
-                jr      z, conout1        ; Loop until flag signals ready        
-                pop af                          ; Retrieve character
-                out     (uart_register_0), a    ; Output the character
+                PUSH    AF              ; Store character
+CONOUT1:
+                IN      A, (uart_register_5)    ; Line status register
+                BIT     5, A            ; Set Zero flag if still transmitting character
+                JR      Z, CONOUT1      ; Loop until flag signals ready        
+                POP     AF              ; Retrieve character
+                OUT     (uart_register_0), A    ; Output the character
                 RET
 
 ;------------------------------------------------------------------------------
@@ -262,8 +261,8 @@ conout1:
 ; Z=1 if buffer is empty
 CKINCHAR:
 #if 1
-                in      a, (uart_register_5)
-                bit     0, a
+                IN      A, (uart_register_5)
+                BIT     0, A
 #else
                 LD       A,(serBufUsed)
                 CP       A, $0
@@ -336,17 +335,23 @@ CHECKWARM:
                JP        $0153           ; Start BASIC WARM
 
 INIT_16C550:
-                ld      a, 80H          ; Line controle register, Set DLAB=1
-                out     (uart_register_3), a
-                ld      a, 0CH           ; 1843200 / (16 * 9600)
-                out     (uart_register_0), a    ; Divisor latch
-                xor     a
-                out     (uart_register_1), a    ; Divisor latch
-                ld      a, 03H           ; 8N1, Line control register again, DLAB=0
-                out     (uart_register_3), a
-                ld      a, 07H           ; FIFO enable, reset RCVR/XMIT FIFO
-                out     (uart_register_2), a
-                ret
+                LD      A, 80H          ; Line control register, Set DLAB=1
+                OUT     (uart_register_3), A
+                LD      a, 0CH           ; 1843200 / (16 * 9600)
+                OUT     (uart_register_0), A    ; Divisor latch
+                XOR     A
+                OUT     (uart_register_1), A    ; Divisor latch
+                LD      A, 03H           ; 8N1, Line control register, DLAB=0
+                OUT     (uart_register_3), A
+                ; Enable this if you run autoflow control
+;                LD      A, 87H  ;07H           ; FIFO enable, reset RCVR/XMIT FIFO
+                ; Use this otherwise
+                LD      A, 07H           ; FIFO enable, reset RCVR/XMIT FIFO
+                OUT     (uart_register_2), A
+                ; Use this to enable autoflow control
+;                LD      A, 22H
+;                OUT     (uart_register_5), A    ; Enable AFE
+                RET
 
 
 
