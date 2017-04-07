@@ -347,8 +347,10 @@ BAUD_16C550:
                 OUT     (uart_register_0), A    ; Divisor latch
                 XOR     A
                 OUT     (uart_register_1), A    ; Divisor latch
-                LD      A, 03H                  ; 8N1, Line control register, DLAB=0
+                LD      A, 03H                  ; Line control register, 8N1, DLAB=0
                 OUT     (uart_register_3), A
+                LD      A, 02H                  ; Modem control register
+                OUT     (uart_register_4), A    ; Enable RTS
                 LD      A, 07H                  ; FIFO enable, reset RCVR/XMIT FIFO
                 OUT     (uart_register_2), A
                 RET
@@ -360,7 +362,7 @@ AFE_16C550:
                 OUT     (uart_register_2), A
                 ; Use this to enable autoflow control
                 LD      A, 22H                  ; Modem control register
-                OUT     (uart_register_5), A    ; Enable AFE
+                OUT     (uart_register_4), A    ; Enable AFE
                 RET
 
 
