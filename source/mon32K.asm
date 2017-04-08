@@ -352,9 +352,8 @@ ME_LP0:
 ;------------------------------------------------------------------------------
 ; GO_EXEC - Execute program at XXXX
 ; Get an address and jump to it
-; It would be good to use a CALL then the user routine can just use a RET to
-; get back to the Monitor. However, this requires the user routine to maintain the
-; integrity of the Monitor stack and will also conflict with breakpoints.
+; Put MAIN_MENU on stack in case the user routine uses the monitor stack and ends with
+; a RET. This will also allow us to test out built-in routines.
 
 GO_EXEC:
 		CALL	SPACE_GET_WORD	;Input address, c=1 if we have a word, c=0 if no word
@@ -363,10 +362,11 @@ GO_EXEC:
 GE_0:
 		CALL	PRINTI
 		DB	' PC=',EOS
-		LD	H,D
-		LD	L,E
+		LD	HL,DE
+;		LD	L,E
 		CALL	PRINT_HL
-		
+		LD      HL, MAIN_MENU
+		PUSH    HL              ; Return address on stack in case we RET
 		LD	HL, DE
 		JP	(HL)		; HL contains the target address	
 
