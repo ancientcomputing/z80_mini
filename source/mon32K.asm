@@ -1,10 +1,4 @@
-; Monitor/Debugger for Bernd Ulmann's Z80_mini (http://www.vaxman.de/projects/Z80_mini/index.html)
-; Source hosted at: https://github.com/ancientcomputing/z80_mini
-;
-; Many thanks for Bernd's generosity in making the PCB files for the project available
-; so that I could order a set of PCBs from OSH Park and build my own _mini!
-;
-; This version is based on version 0.6.1 of the Monitor/Debugger for the RC2014 
+; Monitor/Debugger for Spencer Owen's Z80-based RC2014 (http://rc2014.co.uk)
 ; Source hosted at: https://github.com/ancientcomputing/rc2014
 ;
 ; Changes:
@@ -29,7 +23,7 @@
 ; 14. A User Guide is now available at:
 ;       https://github.com/ancientcomputing/rc2014/tree/master/docs
 ; 15. We now save the interrupt enable state (IFF2) during breakpoint handling
-; 16. Version for the Z80_mini. Reuses some of the UART code from Bernd's monitor.
+; 16. Use 8030H onwards. Part of effort to use a 255 size serial receive buffer
 ; 
 ;
 ; -----------------------------------------------------------------------------
@@ -62,48 +56,22 @@
 ;
 ; Operation concepts adapted from the Heathkit H8 computer.
 ;
-;Revision history of the original firmware.
-;0.1 	- RS-232 Full duplex operational. June 15
-;0.2 	- LED Put_Char routine operational
-;	- Keyboard Scanning operational
-;	- Demo Keyboard or RS-232 input Displays on both LED & RS-232 output
-;0.3	- Added a modified version of my IMSAI 8080 monitor
-;	- Modified Dump routine to output "M"
-;	- Added "M" function to enter Memory bytes
-;	- Fixed code to assemble using ASMX.
-;0.4	- First Beta Version.
-;	- Added Rest of Keyboard functionality (Alter Register, Memory, I/O, GO)
-;0.5	- Halt reset working
-;	- Single Step working
-;0.6	- Rewrote Register Save
-;	- F-0 Reset detection working
-;	- Fixed Display mode after Step
-;	- Removed "Test Code"
-;0.7	- Repurposed LED x7 to activate beeper on key down events
-;0.8	- Corrected bug introduced in v0.7 with lights
-;0.9	- Documentation improvements
-;	- UiVec now a Subroutine, terminate with RET
-;1.0	- Documentation improvements
-;	- Get Hexfile routine modified to timeout if bad data or if end-of-file record not received
-;	- X-Modem send & receive timeout values increased to allow more time to open/send or receive files
-;1.1	- Added Single Step to RS-232 Menu
+; Revision history of the original firmware in the original source code.
 ;
-;Note.  Some assemblers might choose to substitute Long Jumps (JP) with Relative Jumps (JR) when possible.
-;	These two instructions have different execution times.  Generally, this would not be an issue, however,
-;	within the RS-232 bit banging routines, timing is critical and it may not tolerate the substitution.
-;	The ASMX assembler supported by Herb Johnson's web site works great and does not substitute.
 ;
 ;------------------------------------------------------------------------------
 ;	Memory Map
 ;------------------------------------------------------------------------------
 ; System RAM utilization
-; 8000H-80FFH - BIOS
-; 8100H-81FFH - Monitor
+; 8000H-802FH - BIOS
+; 8030H - Monitor
+; ->80FF - Stack
+; 8100H-81FFH - Buffer
 ; 8200H onwards - BASIC
 
 ; Routines available in int32K.asm
-BIOS_PRINT	.EQU	0069H
-BIOS_PRINT_CRLF	.EQU	006CH
+;BIOS_PRINT	.EQU	0069H
+;BIOS_PRINT_CRLF	.EQU	006CH
 
 ; John Kerr's Disassembler
 ; For use in RAM
@@ -114,7 +82,7 @@ BIOS_PRINT_CRLF	.EQU	006CH
 DISZ80         .EQU    0B00H
 
 ; RST xx vector table (from int32K.asm)
-vecTableStart	.EQU	$8000
+vecTableStart	.EQU	8000H
 rst08vector	.EQU	vecTableStart		; Actual vector is at +1
 rst10vector	.EQU	vecTableStart+3		; Actual vector is at +4
 rst18vector	.EQU	vecTableStart+6		; Actual vector is at +7
@@ -124,11 +92,13 @@ rst30vector	.EQU	vecTableStart+15	; Actual vector is at +16
 rst38vector	.EQU	vecTableStart+18	; Actual vector is at +19
 nmivector	.EQU	vecTableStart+21	; Actual vector is at +22
 vecTableLength	.EQU	24	; 8x3
-vecTableEnd	.EQU	$8020
+vecTableEnd	.EQU	8020H
 
-MON_RAM		equ	8100H	; Start of Monitor RAM scratch space
+bootFlag        .EQU     vecTableEnd+6          ; From int32K.asm
 
-StackTop	equ	81FFH	; Stack = 0x81FF (Next Stack Push Location = 0x81FE)
+MON_RAM		equ	8030H	; Start of Monitor RAM scratch space
+
+StackTop	equ	80FFH	; Stack = 0x80FF (Next Stack Push Location = 0x80FE)
 
 hex_buffer	equ	MON_RAM		; Offset for Intel HEX uploads
 BRKPOINT	equ	MON_RAM+2	; Flag to indicate that we've hit a breakpoint and that the saved registers are valid
@@ -175,8 +145,42 @@ ESC		equ	27
 ; This part is from bas32K.asm
 ; int32K.asm is written to jump here
 
-COLD:   	JP      MON_COLD	; STARTB          ; Jump for cold start
-WARM:   	JP      MON_WARM	; WARMST          ; Jump for warm start
+                JP      MON_ENTRY
+                JP      MON_WARM    
+
+;------------------------------------------------------------------------------
+; Jump tables for use by the BIOS
+                JP      PRINT_NEW_LINE
+                JP      PRINT
+
+;------------------------------------------------------------------------------
+; Monitor entry point
+
+SIGNON2:        .BYTE   CR,LF
+		.BYTE	"C/W?",0
+		
+MON_ENTRY:
+                LD       A,(bootFlag)   ; Check if we had previously booted
+                CP       'Y'             ; to see if this is power-up
+                JR       NZ,COLDSTART    ; If not BASIC started then always do cold start
+                LD       HL,SIGNON2      ; Cold/warm message
+                CALL     PRINT           ; Output string
+CORW:
+                RST     10H
+                AND      %11011111       ; lower to uppercase
+                CP       'C'
+                JR       NZ, CHECKWARM
+	        CALL	PRINT_NEW_LINE
+COLDSTART:     
+                LD       A,'Y'           ; Set the BASIC STARTED flag
+                LD       (bootFlag),A
+                JP       MON_COLD        ; monitor COLD
+CHECKWARM:
+                CP       'W'
+                JR       NZ, CORW
+                RST      08H
+                CALL     PRINT_NEW_LINE
+                JP       MON_WARM
 
 ;------------------------------------------------------------------------------
 ; MAIN MENU
@@ -235,12 +239,12 @@ MM_CC:
 DO_HELP:
 		CALL 	PRINTI		;Display Help when input is invalid
 VERSION:
-		DB	CR,LF,"Monitor/Debugger v0.6.1 for Z80_mini"
+		DB	CR,LF,"Monitor/Debugger v0.7.1"
 		DB	CR,LF,"?              Print this help"
 		DB      CR,LF,"A XXXX         Disassemble from XXXX"
 		DB	CR,LF,"C              Continue from Breakpoint"
 		DB	CR,LF,"D XXXX         Dump memory from XXXX"
-		DB	CR,LF,"E XXXX         Edit memory from XXXX"
+		DB	CR,LF,"E XXXX         Edit memory from XXXX; CR to skip"
 		DB	CR,LF,"G XXXX         Go execute from XXXX"
 		DB	CR,LF,"H XXXX         Set HEX file start address to XXXX"
 		DB	CR,LF,"I XX           Input from port XX"
@@ -298,7 +302,7 @@ DL_P1L:		; Start of print byte loop
 		DJNZ	DL_P1L		; Loop next byte
 ;DL_P2:
 		CALL	PRINTI		;Print Seperator between part 1 and part 2
-		DB	" ; ",EOS
+		DB	" ; ", EOS
 
 		; Print characters
 DL_PSL2:
@@ -307,14 +311,14 @@ DL_PSL2:
 		
 		; Print ASCII characters
 DL_P2L:		; Start of print ASCII loop
-		LD	A,(HL)
+		LD	A, (HL)
 		CP	' '		;A - 20h	Test for Valid ASCII characters
 		JR	NC, DL_P2K1
-		LD	A,'.'				;Replace with . if not ASCII
+		LD	A, '.'				;Replace with . if not ASCII
 DL_P2K1:
-		CP	0x7F		;A - 07Fh
+		CP	7FH		;A - 07Fh
 		JR	C, DL_P2K2
-		LD	A,'.'
+		LD	A, '.'
 DL_P2K2:
 		CALL	PUT_CHARBC
 		INC	HL
@@ -341,19 +345,24 @@ ME_LP:
 		; A = non-hex char input (if CY=1)
 		CALL	SPACE_GET_BYTE	; Input new value or Exit if invalid
 		JR	NC, ME_LP0	; Valid byte
+		; Not valid hex character
+		CP      A, CR          ; Did we hit a RETURN?
+		JR      Z, ME_LP1       ; Yes, skip saving anything and inc hl
 		JP	MAIN_MENU	; Invalid byte, C=1 -> exit
 ME_LP0:
 		LD	(HL), A		; Save new value
 		LD	A, (HL)		; Read back value
 		CALL	SPACE_PRINT_BYTE
+ME_LP1:
 		INC	HL		;Advance to next location
 		JR	ME_LP		;repeat input
 
 ;------------------------------------------------------------------------------
 ; GO_EXEC - Execute program at XXXX
 ; Get an address and jump to it
-; Put MAIN_MENU on stack in case the user routine uses the monitor stack and ends with
-; a RET. This will also allow us to test out built-in routines.
+; It would be good to use a CALL then the user routine can just use a RET to
+; get back to the Monitor. However, this requires the user routine to maintain the
+; integrity of the Monitor stack and will also conflict with breakpoints.
 
 GO_EXEC:
 		CALL	SPACE_GET_WORD	;Input address, c=1 if we have a word, c=0 if no word
@@ -362,11 +371,11 @@ GO_EXEC:
 GE_0:
 		CALL	PRINTI
 		DB	' PC=',EOS
-		LD	HL,DE
-;		LD	L,E
+		LD	H,D
+		LD	L,E
 		CALL	PRINT_HL
 		LD      HL, MAIN_MENU
-		PUSH    HL              ; Return address on stack in case we RET
+		PUSH    HL              ; Save return address so that we can do a RET
 		LD	HL, DE
 		JP	(HL)		; HL contains the target address	
 
@@ -758,8 +767,17 @@ PUT_CHARBC:
 ; PRINT -- Print A null-terminated string @(HL)
 ; Original code: HL points to byte past the EOS
 ; BIOS code: HL points to EOS. But that is okay because EOS = NOP!!
-
-PRINT:		JP	BIOS_PRINT
+;PRINT:		JP	BIOS_PRINT
+;------------------------------------------------------------------------------
+; Input: HL points to the string
+; Exit; A is changed, HL points to EOS
+PRINT:          LD       A,(HL)          ; Get character
+                OR       A               ; Is it 00H ?
+                RET      Z               ; Then RETurn on terminator
+                RST      08H             ; Print it
+                INC      HL              ; Next Character
+                JR       PRINT           ; Continue until 00H
+                RET
 
 ; -----------------------------------------------------------------------------
 ; PRINT IMMEDIATE
@@ -842,14 +860,21 @@ PRINT_SPACE:	LD	A, ' '
 ;pre: none
 ;post: 0x0A printed to console
 
+;------------------------------------------------------------------------------
+; Exit: A is changed
 PRINT_NEW_LINE:
-		JP	BIOS_PRINT_CRLF	;006CH		; Call BIOS
+;		JP	BIOS_PRINT_CRLF	;006CH		; Call BIOS
+                LD        A, 0DH
+		RST       08H
+		LD        A, 0AH
+		RST       08H
+		RET
 
 ;------------------------------------------------------------------------------
 
-ADD_HL_A	ADD	A,L		;4
-		LD	L,A		;4
-		RET NC			;10
+ADD_HL_A	ADD	A, L
+		LD	L, A
+		RET     NC
 		INC	H
 		RET
 
