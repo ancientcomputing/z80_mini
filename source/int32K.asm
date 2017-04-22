@@ -173,12 +173,16 @@ SIGNON1:       .BYTE     CS
 serialInt:      
                 PUSH     AF
                 PUSH     HL
+recheck_data:
+                ; Check if data available
+                ; We're not enabling any other interupt
+                IN      A, (uart_register_5)
+                BIT     0, A
 
-                IN       A,($80)
-                AND      $01             ; Check if interupt due to read buffer full
                 JR       Z,rts0          ; if not, ignore
 
-                IN       A,($81)        ; Get character from UART
+                ; Read character from UART
+                in      a, (uart_register_0)    ; Read character from UART
                 PUSH     AF             ; Save it first
                 LD       A,(serBufUsed) ; Get # of bytes in buffer
                 CP       SER_BUFSIZE    ; If full then ignore
@@ -200,22 +204,16 @@ notFull:
                 LD      L, A
                 LD      H, hi(serBuf)
                 ; Now HL points to next location in buffer
-;        LD       HL,(serInPtr)
-;                INC      HL
-;                LD       A,L             ; Only need to check low byte becasuse buffer<256 bytes
-;                CP       lo(serBuf+SER_BUFSIZE)	; bc & $FF
-;                JR       NZ, notWrap
-;                LD       HL,serBuf
-;notWrap:
+
                 LD       (serInPtr),HL  ; Save pointer
                 POP      AF             ; Get character
                 LD       (HL),A         ; Save it in buffer
                 LD       A,(serBufUsed)
-;                INC      A
                 CP       SER_FULLSIZE
-                JR       C, rts0
-                LD       A, RTS_HIGH
-                OUT      ($80), A       ; Deassert RTS
+                jr      c, recheck_data ; See if anymore data in buffer
+                ; High water mark
+                call    deassert_rts_16C550
+
 rts0:
                 POP      HL
                 POP      AF
@@ -229,7 +227,7 @@ handle_nmi:
 ; Get a character from buffer. 
 ; Blocking call
 RXA:
-#if 1
+#if 0
 RX_LOOP:
                 IN      A, (uart_register_5)
                 BIT     0, A
@@ -253,8 +251,8 @@ waitForChar:    LD       A, (serBufUsed)
                 LD       (serBufUsed),A
                 CP       SER_EMPTYSIZE
                 JR       NC,rts1
-                LD       A,RTS_LOW
-                OUT      ($80),A
+                ; Reset RTS
+                call    assert_rts_16C550
 rts1:
                 LD       A,(HL)
                 EI
@@ -280,7 +278,7 @@ CONOUT1:
 ; Check if a character is available
 ; Z=1 if buffer is empty
 CKINCHAR:
-#if 1
+#if 0
                 IN      A, (uart_register_5)
                 BIT     0, A
                 RET
@@ -320,9 +318,9 @@ INIT:
 ;------------------------------------------------------------------------------
 ; Initialize UART
 INIT_16C550:
-                LD      L, 0CH                  ; 1843200 / (16 * 9600)
+                LD      L, 04H  ; 115200 with 7.xMHz was 0CH ; 1843200 / (16 * 9600)
                 ; Call this routine with a value in L to set the baudrate
-BAUD_16C550:
+SETBAUD_16C550:
                 LD      A, 80H                  ; Line control register, Set DLAB=1
                 OUT     (uart_register_3), A
                 LD      A, L
@@ -333,9 +331,27 @@ BAUD_16C550:
                 OUT     (uart_register_3), A
                 LD      A, 02H                  ; Modem control register
                 OUT     (uart_register_4), A    ; Enable RTS
-                LD      A, 07H                  ; FIFO enable, reset RCVR/XMIT FIFO
+                LD      A, 87H                  ; FIFO enable, reset RCVR/XMIT FIFO
                 OUT     (uart_register_2), A
+                ld      a, 01h                  ; Enable receiver interrupt
+                out     (uart_register_1), a
                 RET
+ 
+;------------------------------------------------------------------------------
+; This is the UART-specific call to bring RTS high to disable transmit from terminal
+; We can use A
+deassert_rts_16C550:
+                ld      a, 00h
+                out     (uart_register_4), a
+                ret
+
+;------------------------------------------------------------------------------
+; This is the UART-specific call to bring RTS low to re-enable transmit
+
+assert_rts_16C550:
+                ld      a, 02h
+                out     (uart_register_4), a
+                ret
 
 ;------------------------------------------------------------------------------
 ; Enable autoflow control
